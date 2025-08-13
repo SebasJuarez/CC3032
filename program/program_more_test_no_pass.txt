@@ -1,0 +1,10 @@
+true + false
+"3" * 2
+1 + (true)
+(1 + "a") * 3
+"hola" + "mundo"
+(3 + 2) / "1"
+5 * "2.0"
+"7" - 1
+8 / false
+(true) * 5
