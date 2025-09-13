@@ -85,3 +85,28 @@ class SymbolTable:
 
     def get_class(self, name: str) -> Optional[ClassSymbol]:
         return self.classes.get(name)
+    
+    def dump(self) -> str:
+        lines = []
+        # Scopes en orden de creación (globals primero)
+        for depth, scope in enumerate(self._stack):
+            lines.append(f"[{depth}] scope {scope.name}")
+            for name, sym in scope.symbols.items():
+                kind = "const" if getattr(sym, "is_const", False) else "var"
+                if isinstance(sym, FunctionSymbol): kind = "function"
+                elif isinstance(sym, FieldSymbol): kind = "field"
+                lines.append(f"  - {name}: {sym.typ} ({kind})")
+
+        if self.classes:
+            lines.append("Classes:")
+            for cname, cls in self.classes.items():
+                base = f" : {cls.base_class.name}" if getattr(cls, "base_class", None) else ""
+                lines.append(f"  * {cname}{base}")
+                for fname, field in getattr(cls, "fields", {}).items():
+                    c = "const " if getattr(field, "is_const", False) else ""
+                    lines.append(f"      - {c}{fname}: {field.typ}")
+                for mname, m in getattr(cls, "methods", {}).items():
+                    params = ", ".join(f"{p.name}: {p.typ}" for p in getattr(m, "params", []))
+                    lines.append(f"      - method {mname}({params}): {m.return_type}")
+        return "\n".join(lines)
+

@@ -2,6 +2,11 @@ import pytest
 from src.parse_utils import parse_string
 from src.semantic.errors import SemanticErrorReport
 from src.semantic.analyzer import SemanticAnalyzer
+import sys, pathlib
+
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
 
 def analyze(src: str):
     parser = parse_string(src)
