@@ -23,12 +23,12 @@ def main(argv):
     analyzer.visit(tree)
 
     if errors.has_errors():
-        print("❌ Semantic errors found:")
+        print("Semantic errors found:")
         for e in errors.errors:
             print(f"- {e}")
         sys.exit(2)
     else:
-        print("✅ Semantic analysis completed successfully.")
+        print("Semantic analysis completed successfully.")
 
 if __name__ == "__main__":
     main(sys.argv)

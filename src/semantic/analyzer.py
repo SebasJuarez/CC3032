@@ -26,7 +26,7 @@ class SemanticAnalyzer(CompiscriptVisitor):
         self._inside_function: List[Type] = []
         self._current_class: Optional[ClassSymbol] = None
 
-    # =============== Programa / Bloques ===============
+    # ====== Programa y Bloques ======
     def visitProgram(self, ctx: CompiscriptParser.ProgramContext):
         for st in ctx.statement():
             self.visit(st)
@@ -39,10 +39,9 @@ class SemanticAnalyzer(CompiscriptVisitor):
         self.symtab.pop()
         return None
 
-    # =============== Declaraciones ===============
+    # ====== Declaraciones (variables, constantes) ======
     def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
         name = ctx.Identifier().getText()
-        # En var/const, el tipo está dentro de typeAnnotation -> typeSpec
         decl_type = self._type_from(ctx.typeAnnotation().typeSpec()) if ctx.typeAnnotation() else None
         init = ctx.initializer().expression() if ctx.initializer() else None
 
@@ -53,7 +52,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
         if decl_type is None and init is not None:
             decl_type = self.visit(init)
 
-        # ¿Campo de clase?
         if self._current_class is not None:
             field_sym = FieldSymbol(name, decl_type or Void, is_const=False)
             if name in self._current_class.fields:
@@ -110,7 +108,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
         expr_count = len(ctx.expression())
 
         if expr_count == 1:
-            # Asignación simple a variable
             name = ctx.Identifier().getText()
             sym = self.symtab.current.resolve(name)
             if sym is None:
@@ -124,9 +121,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
                 self.errors.add(*_pos(ctx), f"Type mismatch in assignment to '{name}': expected {sym.typ}, got {rhs}.")
             return None
 
-        # Asignación a propiedad base.prop = rhs
         base_t = self.visit(ctx.expression(0))
-        prop = ctx.Identifier().getText()   # único Identifier en esta alternativa
+        prop = ctx.Identifier().getText()
         rhs_t = self.visit(ctx.expression(1))
         base_cls = self.symtab.get_class(base_t.tag) if base_t else None
         if base_cls:
@@ -138,10 +134,9 @@ class SemanticAnalyzer(CompiscriptVisitor):
                     self.errors.add(*_pos(ctx), f"Type mismatch for field '{prop}': expected {mem.typ}, got {rhs_t}.")
             else:
                 self.errors.add(*_pos(ctx), f"Unknown field '{prop}' in class '{base_cls.name}'.")
-        # Si no es clase conocida, lo dejamos permisivo.
         return None
 
-    # =============== Control de flujo ===============
+    # ====== Control de flujo (if, while, for, break, continue, return) ======
     def visitIfStatement(self, ctx: CompiscriptParser.IfStatementContext):
         cond_t = self.visit(ctx.expression())
         if not cond_t or not cond_t.is_boolean():
@@ -224,10 +219,9 @@ class SemanticAnalyzer(CompiscriptVisitor):
                 self.errors.add(*_pos(ctx), f"Return type mismatch: expected {expected}, got void.")
         return None
 
-    # =============== Funciones y Clases ===============
+    # ====== Funciones y Clases ======
     def visitFunctionDeclaration(self, ctx: CompiscriptParser.FunctionDeclarationContext):
         name = ctx.Identifier().getText()
-        # Para funciones, tu gramática expone typeSpec() directamente
         ret_t = self._type_from(ctx.typeSpec()) if ctx.typeSpec() else Void
         params: List[Symbol] = []
         if ctx.parameters():
@@ -251,7 +245,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
                 self.errors.add(*_pos(ctx), f"Function '{name}' already declared in this scope.")
                 return None
 
-        # Scope de función
         self.symtab.push(f"fn:{name}")
         for ps in params:
             if not self.symtab.current.define(ps):
@@ -288,7 +281,7 @@ class SemanticAnalyzer(CompiscriptVisitor):
         self._current_class = prev
         return None
 
-    # =============== Statements simples ===============
+    # ====== Statements simples (print, expresión) ======
     def visitExpressionStatement(self, ctx: CompiscriptParser.ExpressionStatementContext):
         self.visit(ctx.expression())
         return None
@@ -297,7 +290,7 @@ class SemanticAnalyzer(CompiscriptVisitor):
         self.visit(ctx.expression())
         return None
 
-    # =============== Expresiones ===============
+    # ====== Expresiones ======
     def visitPrimaryExpr(self, ctx: CompiscriptParser.PrimaryExprContext):
         if ctx.literalExpr():
             return self.visit(ctx.literalExpr())
@@ -328,7 +321,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
         if ctx.arrayLiteral():
             exprs = ctx.arrayLiteral().expression()
             if not exprs:
-                # [] → arreglo 1D de tipo desconocido (void)
                 return Type(Void.tag, dims=1)
 
             elem_types = [self.visit(e) for e in exprs]
@@ -345,10 +337,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
             # Caso B: elementos son a su vez arreglos (soporta anidados)
             if all(t.dims >= 1 for t in elem_types):
                 inner_dim = elem_types[0].dims
-                # exigimos misma dimensionalidad interna
                 if not all(t.dims == inner_dim for t in elem_types):
                     return Type(Void.tag, dims=1)
-                # unificar tipo base
                 base_tag = elem_types[0].tag
                 if all(t.tag == base_tag for t in elem_types):
                     pass
@@ -356,10 +346,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
                     base_tag = "float"
                 else:
                     return Type(Void.tag, dims=1)
-                # el literal externo agrega una dimensión más
                 return Type(base_tag, dims=inner_dim + 1)
 
-            # Mezcla de escalares y arreglos ⇒ inválido
             return Type(Void.tag, dims=1)
 
         return Void
@@ -396,10 +384,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
         return left
 
     def visitRelationalExpr(self, ctx: CompiscriptParser.RelationalExprContext):
-        # Si no hay operador relacional, propaga el tipo del operando
         if len(ctx.additiveExpr()) == 1:
             return self.visit(ctx.additiveExpr(0))
-        # Con operadores: ambos numéricos
         left = self.visit(ctx.additiveExpr(0))
         for i in range(1, len(ctx.additiveExpr())):
             right = self.visit(ctx.additiveExpr(i))
@@ -409,10 +395,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
         return Boolean
 
     def visitEqualityExpr(self, ctx: CompiscriptParser.EqualityExprContext):
-        # Si no hay operador de igualdad, propaga el tipo del operando
         if len(ctx.relationalExpr()) == 1:
             return self.visit(ctx.relationalExpr(0))
-        # Con operadores: tipos compatibles
         left = self.visit(ctx.relationalExpr(0))
         for i in range(1, len(ctx.relationalExpr())):
             right = self.visit(ctx.relationalExpr(i))
@@ -424,10 +408,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
     def visitLogicalAndExpr(self, ctx: CompiscriptParser.LogicalAndExprContext):
         n = len(ctx.equalityExpr())
-        # si no hay '&&', solo propaga el tipo del único operando
         if n == 1:
             return self.visit(ctx.equalityExpr(0))
-        # con '&&' sí exigimos booleanos
         ok = True
         for i in range(n):
             t = self.visit(ctx.equalityExpr(i))
@@ -438,10 +420,8 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
     def visitLogicalOrExpr(self, ctx: CompiscriptParser.LogicalOrExprContext):
         n = len(ctx.logicalAndExpr())
-        # si no hay '||', solo propaga el tipo del único operando
         if n == 1:
             return self.visit(ctx.logicalAndExpr(0))
-        # con '||' sí exigimos booleanos
         ok = True
         for i in range(n):
             t = self.visit(ctx.logicalAndExpr(i))
@@ -479,21 +459,17 @@ class SemanticAnalyzer(CompiscriptVisitor):
         return _
     
     def visitTryCatchStatement(self, ctx: CompiscriptParser.TryCatchStatementContext):
-        # try { ... }  -> el block ya maneja su propio scope
         self.visit(ctx.block(0))
 
-        # catch (Identifier) { ... }
-        # Creamos un scope para el catch y definimos la variable del parámetro.
         self.symtab.push("catch")
         name = ctx.Identifier().getText()
-        # Tipo del error: usamos string para permitir "texto" + err en print/concat.
         self.symtab.current.define(Symbol(name, String))
         self.visit(ctx.block(1))
         self.symtab.pop()
         return None
 
 
-    # =============== LHS chaining ===============
+    # ====== LHS chaining (acceso a miembros, indexación, llamadas) ======
     def eval_lhs(self, ctx: CompiscriptParser.LeftHandSideContext) -> Type:
         """
         leftHandSide: primaryAtom (suffixOp)*;
@@ -503,7 +479,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
         for so in ctx.suffixOp():
             text = so.getText()
-            # Llamada f(...), obj.m(...), (expr)(...)
             if text.startswith("("):
                 arg_types = []
                 if so.arguments():
@@ -521,7 +496,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
                     else:
                         base_t = Void
 
-            # Indexación [...]
             elif text.startswith("["):
                 idx_t = self.visit(so.expression())
                 if not idx_t.is_numeric() or idx_t.tag != "integer":
@@ -533,7 +507,6 @@ class SemanticAnalyzer(CompiscriptVisitor):
                     base_t = Type(base_t.tag, base_t.dims - 1)
                     base_sym = None
 
-            # Acceso propiedad .Identifier
             else:
                 member = so.Identifier().getText() if hasattr(so, "Identifier") and so.Identifier() else text[1:]
                 base_cls = self.symtab.get_class(base_t.tag) if base_t else None
@@ -559,18 +532,13 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
         return base_t
 
-    # =============== Helpers ===============
+    # ====== Helpers ======
     def _type_from(self, type_spec_ctx) -> Type:
-        """
-        Convierte el nodo typeSpec de la gramática en un Type interno.
-        Soporta primitivos: integer, float, string, boolean, void
-        y arreglos con sufijos [] (p.ej., integer[], float[][]).
-        Si el nombre no coincide con primitivo, se asume nombre de clase.
-        """
+    # Esta parte convierte el nodo en un type interno. Soporta integer, float, string, bool, void y algunos arrays. Tiene prevención de errores.
         if type_spec_ctx is None:
             return Void
 
-        text = type_spec_ctx.getText()  # p.ej. 'integer', 'integer[]', 'float[][]'
+        text = type_spec_ctx.getText()
         dims = 0
         while text.endswith("[]"):
             dims += 1
@@ -588,16 +556,13 @@ class SemanticAnalyzer(CompiscriptVisitor):
         elif base in ("void",):
             tag = "void"
         else:
-            # Tratar como nombre de clase
             tag = base
 
         return Type(tag=tag, dims=dims)
 
     def _type_compatible(self, target: Type, value: Type) -> bool:
-        # Igual base (ignorando mayúsculas/minúsculas para clases) y misma dimensionalidad
         if target.dims == value.dims and target.tag.lower() == value.tag.lower():
             return True
-        # Promoción numérica int -> float (solo escalares)
         if target.dims == 0 and value.dims == 0 and target.tag == "float" and value.tag == "integer":
             return True
         return False
@@ -612,26 +577,22 @@ class SemanticAnalyzer(CompiscriptVisitor):
         """
         text = pctx.getText()
 
-        # this
         if text == "this":
             if self._current_class is None:
                 self.errors.add(*_pos(pctx), "'this' used outside of a class.")
                 return (Void, None)
             return (Type(self._current_class.name), None)
 
-        # Identificador simple en scopes
         sym = self.symtab.current.resolve(text)
         if sym is not None:
             if isinstance(sym, FunctionSymbol):
                 return (sym.return_type, sym)
             return (sym.typ, sym)
 
-        # Nombre de clase conocida
         cls = self.symtab.get_class(text)
         if cls is not None:
             return (Type(cls.name), None)
 
-        # newClase(...)
         if text.startswith("new"):
             rest = text[3:].lstrip()
             cname = rest.split("(", 1)[0].strip()

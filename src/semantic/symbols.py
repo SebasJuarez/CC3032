@@ -20,7 +20,6 @@ class FieldSymbol(Symbol):
 
 @dataclass
 class ClassSymbol(Symbol):
-    # typ.tag == class name
     fields: Dict[str, FieldSymbol] = field(default_factory=dict)
     methods: Dict[str, FunctionSymbol] = field(default_factory=dict)
     base_class: Optional['ClassSymbol'] = None
@@ -59,8 +58,6 @@ class SymbolTable:
     def __init__(self) -> None:
         self.globals = Scope("global", None)
         self.current = self.globals
-        self._stack: List[Scope] = [self.globals]
-        # Registro de clases por nombre
         self.classes: Dict[str, ClassSymbol] = {}
 
     def push(self, name: str) -> Scope:
@@ -75,8 +72,7 @@ class SymbolTable:
         popped = self._stack.pop()
         self.current = self._stack[-1]
         return popped
-
-    # Helpers para clases
+    
     def define_class(self, cls: ClassSymbol) -> bool:
         if cls.name in self.classes:
             return False
@@ -88,7 +84,6 @@ class SymbolTable:
     
     def dump(self) -> str:
         lines = []
-        # Scopes en orden de creación (globals primero)
         for depth, scope in enumerate(self._stack):
             lines.append(f"[{depth}] scope {scope.name}")
             for name, sym in scope.symbols.items():

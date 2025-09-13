@@ -1,6 +1,5 @@
 from antlr4 import FileStream, CommonTokenStream, InputStream
 from pathlib import Path
-# Import from generated package at runtime (after ANTLR generation)
 from src.gen.CompiscriptLexer import CompiscriptLexer
 from src.gen.CompiscriptParser import CompiscriptParser
 
