@@ -58,6 +58,7 @@ class SymbolTable:
     def __init__(self) -> None:
         self.globals = Scope("global", None)
         self.current = self.globals
+        self._stack: List[Scope] = [self.globals]  # Asegura que _stack siempre exista
         self.classes: Dict[str, ClassSymbol] = {}
 
     def push(self, name: str) -> Scope:
