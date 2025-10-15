@@ -48,6 +48,8 @@ def compile_source(source: str, analyzer: SemanticAnalyzer):
         "semantic_errors": list(errors.errors),
         "ok": not errors.has_errors(),
         "parse_tree": tree.toStringTree(recog=parser) if hasattr(tree, "toStringTree") else "(parse tree unavailable)",
+        "parse_tree_obj": tree,
+        "parser_obj": parser,
     }
 
 def symtab_text(analyzer: SemanticAnalyzer) -> str:
@@ -87,6 +89,12 @@ if "analyzer" not in st.session_state:
 if "code" not in st.session_state:
     st.session_state.code = load_default_code()
 
+# Guarda últimos resultados para no perderlos en reruns
+st.session_state.setdefault("parse_tree_obj", None)
+st.session_state.setdefault("last_compile", None)
+st.session_state.setdefault("tac_text", "")
+st.session_state.setdefault("tac_error", "")
+
 # ---------- Sidebar ----------
 st.sidebar.title("Acciones")
 preserve_env = st.sidebar.checkbox(
@@ -97,6 +105,9 @@ preserve_env = st.sidebar.checkbox(
 
 if st.sidebar.button("Resetear entorno (símbolos)"):
     st.session_state.analyzer = SemanticAnalyzer(errors=SemanticErrorReport())
+    st.session_state.parse_tree_obj = None
+    st.session_state.tac_text = ""
+    st.session_state.tac_error = ""
     st.success("Entorno reiniciado.")
 
 uploaded = st.sidebar.file_uploader("Abrir .cps", type=["cps"])
@@ -117,14 +128,15 @@ st.sidebar.download_button(
 # ---------- Main UI ----------
 st.title(PAGE_TITLE)
 
-col_editor, col_actions = st.columns([2, 1])
+# Dos columnas: editor y acciones
+col_editor, col_actions = st.columns([2, 1], gap="large")
 
 with col_editor:
     st.subheader("Editor")
     st.session_state.code = st.text_area(
         "Código fuente",
         value=st.session_state.code,
-        height=400,
+        height=380,
         label_visibility="collapsed",
         placeholder="// Escribe tu Compiscript aquí…",
     )
@@ -132,11 +144,17 @@ with col_editor:
 with col_actions:
     st.subheader("Compilación")
     do_compile = st.button("Compilar", type="primary")
+
     if do_compile:
+        st.session_state.tac_text = ""
+        st.session_state.tac_error = ""
+
         if not preserve_env:
             st.session_state.analyzer = SemanticAnalyzer(errors=SemanticErrorReport())
 
         result = compile_source(st.session_state.code, st.session_state.analyzer)
+        st.session_state.last_compile = result
+        st.session_state.parse_tree_obj = result.get("parse_tree_obj") if result.get("ok") else None
 
         if result["syntax_errors"]:
             st.error(f"{result['syntax_errors']} errores de sintaxis.")
@@ -147,6 +165,17 @@ with col_actions:
         else:
             st.success("Análisis semántico completado con éxito.")
 
+            try:
+                try:
+                    from src.gen.tac_generator import generate_tac_text
+                except Exception:
+                    from tac_generator import generate_tac_text
+
+                tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
+                st.session_state.tac_text = tac_text
+            except Exception as e:
+                st.session_state.tac_error = f"No se pudo generar TAC: {e}"
+
         with st.expander("Árbol de parseo (toStringTree)", expanded=False):
             st.code(result["parse_tree"])
 
@@ -154,3 +183,47 @@ with col_actions:
         with st.expander("Tabla de símbolos", expanded=True):
             st.code(table_text)
             st.download_button("Descargar tabla de símbolos", data=table_text, file_name="symbols.txt")
+
+# ---------- Editor de TAC ----------
+st.markdown("---")
+st.subheader("Código intermedio (TAC)")
+
+if st.session_state.tac_error:
+    st.error(st.session_state.tac_error)
+
+# Editor de solo lectura (puedes quitar disabled si quieres que se pueda editar)
+st.session_state.tac_text = st.text_area(
+    "TAC",
+    value=st.session_state.tac_text,
+    height=260,
+    label_visibility="collapsed",
+    placeholder="Compila sin errores para generar el TAC…",
+    disabled=True,
+)
+
+# Acciones TAC
+col_tac_dl, col_tac_regen = st.columns([1, 1])
+
+with col_tac_dl:
+    if st.session_state.tac_text:
+        st.download_button(
+            "Descargar TAC",
+            data=st.session_state.tac_text,
+            file_name="program.tac",
+            mime="text/plain",
+        )
+
+with col_tac_regen:
+
+    if st.session_state.parse_tree_obj is not None:
+        if st.button("Regenerar TAC"):
+            try:
+                try:
+                    from src.gen.tac_generator import generate_tac_text
+                except Exception:
+                    from tac_generator import generate_tac_text
+                st.session_state.tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
+                st.session_state.tac_error = ""
+            except Exception as e:
+                st.session_state.tac_error = f"No se pudo generar TAC: {e}"
+                st.error(st.session_state.tac_error)

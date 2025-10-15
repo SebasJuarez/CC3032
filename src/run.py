@@ -29,6 +29,17 @@ def main(argv):
         sys.exit(2)
     else:
         print("Semantic analysis completed successfully.")
+        # Optionally generate TAC if requested via argv
+        if "--tac" in argv:
+            try:
+                from src.gen.tac_generator import generate_tac_from_parser
+                from pathlib import Path
+                tac = generate_tac_from_parser(tree)
+                out = Path(source_path).with_suffix('.tac')
+                out.write_text(str(tac), encoding='utf-8')
+                print(f"TAC written to: {out}")
+            except Exception as e:
+                print(f"Failed to generate TAC: {e}")
 
 if __name__ == "__main__":
     main(sys.argv)

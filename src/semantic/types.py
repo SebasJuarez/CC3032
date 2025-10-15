@@ -13,9 +13,7 @@ class TypeTag:
 @dataclass(frozen=True)
 class Type:
     tag: str
-    # For arrays like integer[] or integer[][]
     dims: int = 0
-    # For function types (if you want to extend): args: List[Type], ret: Type
 
     def is_numeric(self) -> bool:
         return self.tag in (TypeTag.INTEGER, TypeTag.FLOAT) and self.dims == 0
@@ -32,7 +30,6 @@ class Type:
     def __str__(self) -> str:
         return f"{self.tag}{'[]'*self.dims}"
 
-# Helper constructors
 Integer = Type(TypeTag.INTEGER)
 Float   = Type(TypeTag.FLOAT)
 String  = Type(TypeTag.STRING)

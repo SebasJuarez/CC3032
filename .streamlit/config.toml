@@ -1,0 +1,6 @@
+[server]
+# Evita errores de watchdog en Windows cuando hay paths en diferentes unidades.
+fileWatcherType = "poll"
+# Opcional: reduce carga de CPU si es necesario (en ms)
+# folderWatchBlacklist = []
+# runOnSave = true
