@@ -48,7 +48,8 @@ assignment
 expressionStatement: expression ';';
 printStatement: 'print' '(' expression ')' ';';
 
-ifStatement: 'if' '(' expression ')' block ('else' block)?;
+ifStatement: 'if' '(' expression ')' block ('else' (ifStatement | block))?;
+
 whileStatement: 'while' '(' expression ')' block;
 doWhileStatement: 'do' block 'while' '(' expression ')' ';';
 forStatement: 'for' '(' (variableDeclaration | assignment | ';') expression? ';' expression? ')' block;
