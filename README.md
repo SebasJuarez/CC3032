@@ -28,18 +28,23 @@ streamlit>=1.24
 
 ## 2) Generación del parser y lexer (ANTLR)
 
-Es necesario tener el comando `antlr4` en el PATH.
+**Requerimiento:** Java instalado (para ejecutar el JAR de ANTLR incluido en el proyecto).
 
-**Mac/Linux:**
-
-```bash
-antlr4 -Dlanguage=Python3 -visitor -o src/gen Compiscript.g4
-```
-
-**Windows (PowerShell/CMD):**
+**Comando (PowerShell/CMD en Windows):**
 
 ```powershell
-antlr4 -Dlanguage=Python3 -visitor -o src\gen Compiscript.g4
+java -jar antlr-4.13.1-complete.jar -Dlanguage=Python3 -visitor -o src\gen Compiscript.g4
+```
+
+**Comando (Linux/Mac):**
+
+```bash
+java -jar antlr-4.13.1-complete.jar -Dlanguage=Python3 -visitor -o src/gen Compiscript.g4
+```
+
+**Nota:** Si tienes `antlr4` en el PATH, puedes usar:
+```bash
+antlr4 -Dlanguage=Python3 -visitor -o src/gen Compiscript.g4
 ```
 
 Esto generará los archivos `CompiscriptLexer.py`, `CompiscriptParser.py` y `CompiscriptVisitor.py` dentro de `src/gen`.
@@ -244,24 +249,57 @@ Esto corre los casos básicos de prueba y reporta errores si alguno falla.
 src/
 │
 ├── codegen/                # Generación de TAC y temporales
-│   └── temp_manager.py
+│   ├── __init__.py
+│   └── temp_manager.py     # Gestor de temporales con free-list
 │
 ├── gen/                    # Archivos generados por ANTLR
 │   ├── CompiscriptLexer.py
 │   ├── CompiscriptParser.py
 │   ├── CompiscriptVisitor.py
-│   ├── tac.py
-│   └── tac_generator.py
+│   ├── tac.py              # Definición de cuádruplos
+│   └── tac_generator.py    # Generador de código intermedio
 │
 ├── semantic/               # Análisis semántico
-│   ├── analyzer.py
-│   ├── errors.py
-│   ├── symbols.py
-│   └── types.py
+│   ├── analyzer.py         # Visitor de análisis semántico
+│   ├── errors.py           # Manejo de errores semánticos
+│   ├── symbols.py          # Tabla de símbolos extendida
+│   └── types.py            # Sistema de tipos
 │
 ├── parse_utils.py          # Funciones de parsing (archivo o string)
-├── run.py                  # Punto de entrada principal
-├── ide.py                  # Interfaz visual (Streamlit)
-├── pruebas.py              # Tests básicos
-└── program.cps             # Archivo de prueba
+└── run.py                  # Punto de entrada CLI
+
+docs/
+├── tac_spec.md             # Especificación de TAC (cuádruplos)
+├── architecture.md         # Arquitectura del compilador
+└── todo_notes.md           # Notas de implementación
+
+tests/
+├── test_semantic.py        # Tests unitarios semánticos
+├── ok_*.cps                # Casos válidos
+└── fail_*.cps              # Casos con errores
+
+ide.py                       # IDE web (Streamlit)
+Driver.py                    # Script de pruebas rápidas
+Compiscript.g4               # Gramática ANTLR
+program.cps                  # Programa de prueba
+```
+
+## 9) Documentación adicional
+
+- **[Especificación TAC](docs/tac_spec.md)** — Formato de cuádruplos, operaciones, ejemplos
+- **[Arquitectura](docs/architecture.md)** — Diseño del compilador, flujo de datos, decisiones
+- **[Requerimientos TAC](README_TAC_GENERATION.md)** — Objetivos de la fase 2 del proyecto
+
+## 10) Próximos pasos
+
+- **Fase 3: Backend MIPS** — Traducción de cuádruplos a código ensamblador MIPS
+- Optimizaciones de código intermedio
+- Implementación completa de GC con runtime en assembler
+
+---
+
+**Proyecto:** Compiscript Compiler  
+**Curso:** CC3032 - Compiladores  
+**Fase actual:** Generación de Código Intermedio (TAC)  
+**Fecha:** Octubre 2025
 ```

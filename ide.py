@@ -128,6 +128,9 @@ st.session_state.setdefault("parse_tree_obj", None)
 st.session_state.setdefault("last_compile", None)
 st.session_state.setdefault("tac_text", "")
 st.session_state.setdefault("tac_error", "")
+st.session_state.setdefault("tac_rows", [])
+st.session_state.setdefault("tac_table_md", "")
+st.session_state.setdefault("tac_csv", "")
 
 # -------------------------------------------------------------------
 # Panel lateral (sidebar) con acciones del usuario.
@@ -208,13 +211,37 @@ with col_actions:
 
             # Generación del TAC si no hay errores
             try:
-                try:
-                    from src.gen.tac_generator import generate_tac_text
-                except Exception:
-                    from tac_generator import generate_tac_text
-
+                from src.gen.tac_generator import generate_tac_text, generate_tac_from_parser
+                # Texto de TAC (cuádruplos en paréntesis)
                 tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
                 st.session_state.tac_text = tac_text
+                # Objeto TAC para tabla
+                tac_obj = generate_tac_from_parser(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
+                rows = []
+                for q in getattr(tac_obj, 'quads', []):
+                    # Cada fila como dict para la tabla/csv
+                    rows.append({
+                        'op': getattr(q, 'op', ''),
+                        'arg1': getattr(q, 'arg1', '') or '',
+                        'arg2': getattr(q, 'arg2', '') or '',
+                        'res': getattr(q, 'res', '') or '',
+                    })
+                st.session_state.tac_rows = rows
+                # Markdown table (sin depender de pandas)
+                md_lines = ["| op | arg1 | arg2 | res |", "|---|---|---|---|"]
+                for r in rows:
+                    md_lines.append(f"| {r['op']} | {r['arg1']} | {r['arg2']} | {r['res']} |")
+                st.session_state.tac_table_md = "\n".join(md_lines)
+                # CSV para descarga
+                csv_lines = ["op,arg1,arg2,res"]
+                def esc(x: str) -> str:
+                    x = str(x)
+                    return '"' + x.replace('"', '""') + '"' if (',' in x or '"' in x or '\n' in x) else x
+                for r in rows:
+                    csv_lines.append(
+                        f"{esc(r['op'])},{esc(r['arg1'])},{esc(r['arg2'])},{esc(r['res'])}"
+                    )
+                st.session_state.tac_csv = "\n".join(csv_lines)
             except Exception as e:
                 st.session_state.tac_error = f"No se pudo generar TAC: {e}"
 
@@ -236,15 +263,30 @@ st.subheader("Código intermedio (TAC)")
 if st.session_state.tac_error:
     st.error(st.session_state.tac_error)
 
-# Editor de TAC (solo lectura por defecto)
-st.session_state.tac_text = st.text_area(
-    "TAC",
-    value=st.session_state.tac_text,
-    height=260,
-    label_visibility="collapsed",
-    placeholder="Compila sin errores para generar el TAC…",
-    disabled=True,
-)
+tab_table, tab_text = st.tabs(["Tabla", "Texto"])
+
+with tab_table:
+    if st.session_state.tac_rows:
+        st.markdown(st.session_state.tac_table_md)
+        st.download_button(
+            "Descargar TAC (CSV)",
+            data=st.session_state.tac_csv,
+            file_name="program_tac.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Compila sin errores para ver la tabla de TAC…")
+
+with tab_text:
+    # Editor de TAC (solo lectura por defecto)
+    st.session_state.tac_text = st.text_area(
+        "TAC",
+        value=st.session_state.tac_text,
+        height=260,
+        label_visibility="collapsed",
+        placeholder="Compila sin errores para generar el TAC…",
+        disabled=True,
+    )
 
 # -------------------------------------------------------------------
 # Acciones sobre el TAC: descarga o regeneración manual.
@@ -264,11 +306,31 @@ with col_tac_regen:
     if st.session_state.parse_tree_obj is not None:
         if st.button("Regenerar TAC"):
             try:
-                try:
-                    from src.gen.tac_generator import generate_tac_text
-                except Exception:
-                    from tac_generator import generate_tac_text
+                from src.gen.tac_generator import generate_tac_text, generate_tac_from_parser
                 st.session_state.tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
+                tac_obj = generate_tac_from_parser(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
+                rows = []
+                for q in getattr(tac_obj, 'quads', []):
+                    rows.append({
+                        'op': getattr(q, 'op', ''),
+                        'arg1': getattr(q, 'arg1', '') or '',
+                        'arg2': getattr(q, 'arg2', '') or '',
+                        'res': getattr(q, 'res', '') or '',
+                    })
+                st.session_state.tac_rows = rows
+                md_lines = ["| op | arg1 | arg2 | res |", "|---|---|---|---|"]
+                for r in rows:
+                    md_lines.append(f"| {r['op']} | {r['arg1']} | {r['arg2']} | {r['res']} |")
+                st.session_state.tac_table_md = "\n".join(md_lines)
+                csv_lines = ["op,arg1,arg2,res"]
+                def esc(x: str) -> str:
+                    x = str(x)
+                    return '"' + x.replace('"', '""') + '"' if (',' in x or '"' in x or '\n' in x) else x
+                for r in rows:
+                    csv_lines.append(
+                        f"{esc(r['op'])},{esc(r['arg1'])},{esc(r['arg2'])},{esc(r['res'])}"
+                    )
+                st.session_state.tac_csv = "\n".join(csv_lines)
                 st.session_state.tac_error = ""
             except Exception as e:
                 st.session_state.tac_error = f"No se pudo generar TAC: {e}"

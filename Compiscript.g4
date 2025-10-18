@@ -30,7 +30,7 @@ statement
 block: '{' statement* '}';
 
 variableDeclaration
-  : ('let' | 'var') Identifier typeAnnotation? initializer? ';'
+  : ('let' | 'var') (typeSpec Identifier | Identifier typeAnnotation?) initializer? ';'
   ;
 
 constantDeclaration
@@ -136,7 +136,8 @@ leftHandSide
 
 primaryAtom
   : Identifier                                 # IdentifierExpr
-  | 'new' Identifier '(' arguments? ')'        # NewExpr
+  | 'new' Identifier '(' arguments? ')'        # NewObjectExpr
+  | 'new' baseType '[' expression ']'          # NewArrayExpr
   | 'this'                                     # ThisExpr
   ;
 

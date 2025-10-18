@@ -10,21 +10,12 @@ class Quad:
 
     def __str__(self) -> str:
         """
-        Imprime el cuádruplo sin guiones bajos cuando los campos son None o vacíos.
-        Ejemplo:
-            (mov, 3, a)
-            (+, a, b, t0)
+        Imprime el cuádruplo en formato fijo de 4 campos (op, arg1, arg2, res)
+        dejando en blanco los campos vacíos, sin usar '_'.
         """
-        parts = [self.op]
-
-        if self.arg1 not in (None, "", "_"):
-            parts.append(self.arg1)
-        if self.arg2 not in (None, "", "_"):
-            parts.append(self.arg2)
-        if self.res not in (None, "", "_"):
-            parts.append(self.res)
-
-        return "(" + ", ".join(parts) + ")"
+        def f(x: Optional[str]) -> str:
+            return "" if (x is None or x == "_") else str(x)
+        return f"({self.op}, {f(self.arg1)}, {f(self.arg2)}, {f(self.res)})"
 
 class TAC:
     def __init__(self) -> None:

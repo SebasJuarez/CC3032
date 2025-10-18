@@ -1,4 +1,4 @@
-# Generated from ./Compiscript.g4 by ANTLR 4.13.1
+# Generated from Compiscript.g4 by ANTLR 4.13.1
 from antlr4 import *
 if "." in __name__:
     from .CompiscriptParser import CompiscriptParser
@@ -395,12 +395,21 @@ class CompiscriptListener(ParseTreeListener):
         pass
 
 
-    # Enter a parse tree produced by CompiscriptParser#NewExpr.
-    def enterNewExpr(self, ctx:CompiscriptParser.NewExprContext):
+    # Enter a parse tree produced by CompiscriptParser#NewObjectExpr.
+    def enterNewObjectExpr(self, ctx:CompiscriptParser.NewObjectExprContext):
         pass
 
-    # Exit a parse tree produced by CompiscriptParser#NewExpr.
-    def exitNewExpr(self, ctx:CompiscriptParser.NewExprContext):
+    # Exit a parse tree produced by CompiscriptParser#NewObjectExpr.
+    def exitNewObjectExpr(self, ctx:CompiscriptParser.NewObjectExprContext):
+        pass
+
+
+    # Enter a parse tree produced by CompiscriptParser#NewArrayExpr.
+    def enterNewArrayExpr(self, ctx:CompiscriptParser.NewArrayExprContext):
+        pass
+
+    # Exit a parse tree produced by CompiscriptParser#NewArrayExpr.
+    def exitNewArrayExpr(self, ctx:CompiscriptParser.NewArrayExprContext):
         pass
 
 

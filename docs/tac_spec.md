@@ -1,97 +1,214 @@
 # TAC (Three Address Code) - Especificación para Compiscript
 
-Este documento describe una especificación clara y mínima de código intermedio (TAC) para el proyecto Compiscript, con convenciones, ejemplos y decisiones de diseño.
+Este documento describe la representación de código intermedio (CI) en formato de **cuádruplos** para el proyecto Compiscript, diseñada para facilitar la traducción a MIPS y soportar garbage collection por conteo de referencias.
 
-## Formato de instrucción
+## Formato de cuádruplo
 
-Cada instrucción TAC tendrá una forma textual sencilla: una operación seguida de sus operandos y un resultado opcional.
+Cada instrucción TAC es un cuádruplo: **(op, arg1, arg2, res)**
 
-- Operaciones binarias: op arg1, arg2 -> res
-  - Ejemplo: add t1, t2 -> t3
-- Operaciones unarias: op arg -> res
-  - Ejemplo: neg t1 -> t2
-- Asignación: assign src -> dest
-  - Ejemplo: assign 5 -> a
-- Salto condicional: ifz arg -> label
-  - Significa: si arg == 0 saltar a label
-- Salto incondicional: goto label
-- Llamada y retorno:
-  - param arg  (poner argumento para la llamada)
-  - call func_name, n_args -> res  (res opcional si la función retorna)
-  - ret arg  (en función)
-- Labels: label:
-- Comentarios: # texto (opcional)
+- **op**: código de operación (add, sub, mov, ifz, call, etc.)
+- **arg1**: primer operando (puede ser variable, literal, etiqueta o `_` si no aplica)
+- **arg2**: segundo operando (o `_` si la op es binaria/monádica)
+- **res**: resultado/destino (o `_` si no hay resultado)
+
+Formato textual: `(op, arg1, arg2, res)`
+
+Ejemplos:
+- `(add, x, 2, t0)` — t0 = x + 2
+- `(mov, t0, _, y)` — y = t0
+- `(ifz, t1, L2, _)` — if t1 == 0 goto L2
+- `(label, L0, _, _)` — marca de salto
+- `(call, print, 1, _)` — llamada a función con 1 arg
 
 ## Convenciones
 
-- Temporales: t0, t1, t2, ... gestionados por un `TempManager`.
-- Labels: L0, L1, L2, ... para saltos.
-- Variables globales y locales se referencian por nombre; la tabla de símbolos añadirá `offset` y `is_local` para direccionamiento posterior.
-- Las instrucciones se almacenan como una lista ordenada. Cada función tendrá su propio bloque TAC con prologue/epilogue:
-  - func f:
-    - # prologue (reserva espacio, guardar RA)
-    - ... instrucciones ...
-    - # epilogue (restaura RA, return)
+### Temporales
+- Formato: `t0`, `t1`, `t2`, ...
+- Gestionados por `TempManager` en `src/codegen/temp_manager.py`
+- Reciclables mediante free-list (llamar a `free_temp(t)` cuando ya no se necesita)
+- Se resetean al inicio de cada función con `reset()`
+
+### Etiquetas
+- Formato: `L0`, `L1`, `L2`, ...
+- Generadas por `TACGenerator._new_label()`
+- Usadas para control de flujo (if, while, funciones)
+
+### Variables
+- Variables globales/locales se referencian por nombre
+- La tabla de símbolos incluye metadatos para direccionamiento:
+  - `offset`: desplazamiento en bytes dentro del registro de activación
+  - `is_local`: True para locales/params, False para globales
+  - `mem_size`: tamaño en bytes (4 para int/bool/ref, 8 para float)
+  - `label`: etiqueta única para globales/funciones
+  - `is_param`: True si es parámetro de función
+
+### Tipos de referencia
+- Strings, arrays (dims > 0) y objetos de clase son tipos de referencia
+- Requieren gestión de memoria con conteo de referencias (RC)
 
 ## Activación y memoria
 
-- Para generación posterior a assembler, cada símbolo en la tabla tendrá:
-  - offset: desplazamiento dentro del registro de activación
-  - mem_size: tamaño en bytes (int, bool, arrays si aplica)
-  - is_param/is_local
-  - label (nombre único para globals)
+Cada símbolo en la tabla incluye metadatos para generación de código:
+- **offset**: desplazamiento en bytes desde el frame pointer
+- **mem_size**: tamaño en bytes
+- **is_param**: True si es parámetro
+- **is_local**: True si es local/param, False si global
+- **label**: etiqueta para variables globales y funciones
 
-- El generador TAC añadirá NOTAS (pseudo-instrucciones) para prologue/epilogue como `enter size` y `leave`.
+## Garbage Collection: Conteo de Referencias
 
-## Gestión de temporales
+Para tipos de referencia (strings, arrays, objetos), se emiten cuádruplos de RC:
 
-- API mínima:
-  - new_temp() -> "tN"
-  - free_temp("tN")
-- Política: temporales se asignan por evaluación de expresión y se liberan tan pronto como ya no son necesarios en la generación de la instrucción que los consume.
-- Estrategia de reciclaje: free-list; se reinserta el índice de la temporal para reutilización.
+- **incref**: incrementa el contador de referencias
+  - Formato: `(incref, var, _, _)`
+  - Se emite cuando:
+    - Una variable de referencia se inicializa: `let s: string = "hola"`
+    - Se asigna un valor ref a otra variable ref
+  
+- **decref**: decrementa el contador y libera si llega a 0
+  - Formato: `(decref, var, _, _)`
+  - Se emite cuando:
+    - Una variable ref sale de scope (al final de bloque/función)
+    - Se reasigna una variable ref (decref del valor anterior)
 
-## Ejemplos
+### Ejemplo con RC:
+```compiscript
+let s: string = "hola";  // string es tipo ref
+let t: string = s;       // copia de referencia
+```
 
-1) Asignación simple:
+TAC generado:
+```
+(mov, "hola", _, s)
+(incref, s, _, _)        # incrementar ref count de s
+(incref, s, _, _)        # incrementar antes de copiar
+(decref, t, _, _)        # decrementar ref anterior de t (si existía)
+(mov, s, _, t)
+```
 
-  a = b + 3
+## Operaciones soportadas
+
+### Aritméticas y lógicas
+- `(add, a, b, res)` — res = a + b
+- `(sub, a, b, res)` — res = a - b
+- `(mul, a, b, res)` — res = a * b
+- `(div, a, b, res)` — res = a / b
+- `(mod, a, b, res)` — res = a % b
+- `(and, a, b, res)` — res = a && b
+- `(or, a, b, res)` — res = a || b
+- `(not, a, _, res)` — res = !a
+
+### Relacionales
+- `(lt, a, b, res)` — res = a < b
+- `(le, a, b, res)` — res = a <= b
+- `(gt, a, b, res)` — res = a > b
+- `(ge, a, b, res)` — res = a >= b
+- `(eq, a, b, res)` — res = a == b
+- `(ne, a, b, res)` — res = a != b
+
+### Movimiento y control
+- `(mov, src, _, dest)` — dest = src
+- `(label, L, _, _)` — marca de salto
+- `(goto, L, _, _)` — salto incondicional a L
+- `(ifz, cond, L, _)` — if cond == 0 goto L
+- `(ret, val, _, _)` — retorno de función (val opcional)
+
+### Llamadas a función
+- `(param, arg, _, _)` — pasar argumento (se acumulan antes del call)
+- `(call, fn, nargs, res)` — llamar fn con nargs argumentos, resultado en res (opcional)
+- `(enter, size, _, _)` — prologue: reservar size bytes de stack
+- `(leave, _, _, _)` — epilogue: restaurar frame anterior
+
+### Garbage Collection
+- `(incref, var, _, _)` — incrementar contador de referencias
+- `(decref, var, _, _)` — decrementar y liberar si llega a 0
+
+## Ejemplos completos
+
+### 1) Asignación simple
+```compiscript
+let x: integer = 5;
+let y: integer = x + 2;
+print(y);
+```
 
 TAC:
-  add b, 3 -> t0
-  assign t0 -> a
+```
+(mov, 5, _, x)
+(add, x, 2, t0)
+(mov, t0, _, y)
+(param, y, _, _)
+(call, print, 1, _)
+```
 
-2) If-else:
-
-  if (x < y) { z = 1; } else { z = 2; }
-
-TAC:
-  lt x, y -> t0
-  ifz t0 -> L1
-  assign 1 -> z
-  goto L2
-L1:
-  assign 2 -> z
-L2:
-
-3) While loop:
-
-L0:
-  lt i, 10 -> t0
-  ifz t0 -> L1
-  ...body...
-  goto L0
-L1:
-
-4) Function call:
-
-  r = f(1, x)
+### 2) If-else
+```compiscript
+if (x < y) {
+    z = 1;
+} else {
+    z = 2;
+}
+```
 
 TAC:
-  param 1
-  param x
-  call f, 2 -> t0
-  assign t0 -> r
+```
+(lt, x, y, t0)
+(ifz, t0, L0, _)
+(mov, 1, _, z)
+(goto, L1, _, _)
+(label, L0, _, _)
+(mov, 2, _, z)
+(label, L1, _, _)
+```
+
+### 3) While loop
+```compiscript
+while (i < 10) {
+    sum = sum + i;
+    i = i + 1;
+}
+```
+
+TAC:
+```
+(label, L0, _, _)
+(lt, i, 10, t0)
+(ifz, t0, L1, _)
+(add, sum, i, t1)
+(mov, t1, _, sum)
+(add, i, 1, t2)
+(mov, t2, _, i)
+(goto, L0, _, _)
+(label, L1, _, _)
+```
+
+### 4) Function call con parámetros
+```compiscript
+let r: integer = sum(5, 10);
+```
+
+TAC:
+```
+(param, 5, _, _)
+(param, 10, _, _)
+(call, sum, 2, t0)
+(mov, t0, _, r)
+```
+
+### 5) Tipos de referencia con RC
+```compiscript
+let s: string = "hello";
+let t: string = s;
+```
+
+TAC:
+```
+(mov, "hello", _, s)
+(incref, s, _, _)
+(incref, s, _, _)      # antes de copiar
+(decref, t, _, _)      # liberar ref anterior de t
+(mov, s, _, t)
+```
 
 ## Mapeo AST -> TAC (resumen)
 

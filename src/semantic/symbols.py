@@ -8,6 +8,12 @@ class Symbol:
     name: str
     typ: Type
     is_const: bool = False
+    # Metadatos para generación de código y stack frames
+    offset: Optional[int] = None       # Desplazamiento en el registro de activación (bytes)
+    is_local: bool = True              # True si es local/parámetro, False si es global
+    mem_size: int = 4                  # Tamaño en bytes (4 para int/bool/ref, 8 para float)
+    label: Optional[str] = None        # Etiqueta para globals/funciones
+    is_param: bool = False             # True si es parámetro de función
 
 @dataclass
 class FunctionSymbol(Symbol):
@@ -59,7 +65,10 @@ class SymbolTable:
         self.globals = Scope("global", None)
         self.current = self.globals
         self._stack: List[Scope] = [self.globals]  # Asegura que _stack siempre exista
+        # Mapa de clases por nombre con preservación de mayúsculas
         self.classes: Dict[str, ClassSymbol] = {}
+        # Índice adicional insensible a mayúsculas/minúsculas para lookups robustos
+        self._classes_by_lc: Dict[str, ClassSymbol] = {}
 
     def push(self, name: str) -> Scope:
         scope = Scope(name, self.current)
@@ -75,13 +84,21 @@ class SymbolTable:
         return popped
     
     def define_class(self, cls: ClassSymbol) -> bool:
-        if cls.name in self.classes:
+        """Define una clase en la tabla, de forma case-insensitive.
+        Retorna False si ya existe una clase con el mismo nombre (ignorando mayúsculas/minúsculas).
+        """
+        key_lc = cls.name.lower()
+        if cls.name in self.classes or key_lc in self._classes_by_lc:
             return False
         self.classes[cls.name] = cls
+        self._classes_by_lc[key_lc] = cls
         return True
 
     def get_class(self, name: str) -> Optional[ClassSymbol]:
-        return self.classes.get(name)
+        """Obtiene una clase por nombre de forma case-insensitive."""
+        if name in self.classes:
+            return self.classes.get(name)
+        return self._classes_by_lc.get(name.lower())
     
     def dump(self) -> str:
         lines = []

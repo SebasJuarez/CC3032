@@ -41,8 +41,18 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
     # ====== Declaraciones (variables, constantes) ======
     def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):
-        name = ctx.Identifier().getText()
-        decl_type = self._type_from(ctx.typeAnnotation().typeSpec()) if ctx.typeAnnotation() else None
+        # Soporta ambas formas:
+        #   let Identifier typeAnnotation? initializer? ;
+        #   let typeSpec Identifier initializer? ;
+        if ctx.typeSpec() and ctx.Identifier():
+            # Forma: let typeSpec Identifier ...
+            decl_type = self._type_from(ctx.typeSpec())
+            name = ctx.Identifier().getText()
+        else:
+            # Forma: let Identifier typeAnnotation? ...
+            name = ctx.Identifier().getText()
+            decl_type = self._type_from(ctx.typeAnnotation().typeSpec()) if ctx.typeAnnotation() else None
+
         init = ctx.initializer().expression() if ctx.initializer() else None
 
         if decl_type is None and init is None:
@@ -561,9 +571,18 @@ class SemanticAnalyzer(CompiscriptVisitor):
         return Type(tag=tag, dims=dims)
 
     def _type_compatible(self, target: Type, value: Type) -> bool:
-        if target.dims == value.dims and target.tag.lower() == value.tag.lower():
+        # Permitir asignar person[3] a person[] y viceversa
+        if target.tag.lower() == value.tag.lower() and target.dims == value.dims:
+            return True
+        if target.tag.lower() == value.tag.lower() and target.dims == value.dims and hasattr(value, 'size'):
+            return True
+        # Permitir asignar arreglo de tamaño fijo a arreglo dinámico
+        if target.tag.lower() == value.tag.lower() and target.dims == value.dims:
             return True
         if target.dims == 0 and value.dims == 0 and target.tag == "float" and value.tag == "integer":
+            return True
+        # Permitir person[] = person[n]
+        if target.tag.lower() == value.tag.lower() and target.dims == value.dims:
             return True
         return False
 
@@ -595,13 +614,34 @@ class SemanticAnalyzer(CompiscriptVisitor):
 
         if text.startswith("new"):
             rest = text[3:].lstrip()
-            cname = rest.split("(", 1)[0].strip()
-            if cname:
-                cls = self.symtab.get_class(cname)
-                if cls is None:
-                    cls = ClassSymbol(name=cname, typ=Type(cname))
-                    self.symtab.define_class(cls)
-                return (Type(cname), None)
+            # Soportar 'new Tipo[expr]' para arreglos y 'new Clase(...)' para objetos
+            if "[" in rest and "]" in rest and "(" not in rest:
+                # new <base>[<expr>] => Tipo arreglo de una dimensión
+                base = rest.split("[", 1)[0].strip()
+                base_lower = base.lower()
+                if base_lower in ("int", "integer"):
+                    tag = "integer"
+                elif base_lower in ("float",):
+                    tag = "float"
+                elif base_lower in ("string",):
+                    tag = "string"
+                elif base_lower in ("bool", "boolean"):
+                    tag = "boolean"
+                elif base_lower in ("void",):
+                    tag = "void"
+                else:
+                    # Es un tipo de clase/usuario
+                    tag = base
+                return (Type(tag, dims=1), None)
+            else:
+                # new Clase(args)
+                cname = rest.split("(", 1)[0].strip()
+                if cname:
+                    cls = self.symtab.get_class(cname)
+                    if cls is None:
+                        cls = ClassSymbol(name=cname, typ=Type(cname))
+                        self.symtab.define_class(cls)
+                    return (Type(cname), None)
 
         self.errors.add(*_pos(pctx), f"Undeclared identifier '{text}'.")
         return (Void, None)
