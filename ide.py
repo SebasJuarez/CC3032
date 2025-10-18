@@ -11,9 +11,11 @@ DEFAULT_FILE = "program.cps"
 
 st.set_page_config(page_title=PAGE_TITLE, layout="wide")
 
-# ---------- Helpers ----------
+# -------------------------------------------------------------------
+# Función auxiliar para obtener el número de errores sintácticos del parser.
+# Se hace compatible con diferentes versiones del runtime de ANTLR.
+# -------------------------------------------------------------------
 def get_syntax_errors(parser: Parser) -> int:
-    # Compatible con diferentes runtimes de ANTLR
     try:
         if hasattr(parser, "getNumberOfSyntaxErrors"):
             return int(parser.getNumberOfSyntaxErrors())
@@ -24,11 +26,16 @@ def get_syntax_errors(parser: Parser) -> int:
     except Exception:
         return 0
 
+# -------------------------------------------------------------------
+# Ejecuta el proceso completo de compilación:
+# 1. Analiza el código fuente con ANTLR.
+# 2. Ejecuta el análisis semántico.
+# 3. Retorna un diccionario con los resultados (errores, árbol, etc.).
+# -------------------------------------------------------------------
 def compile_source(source: str, analyzer: SemanticAnalyzer):
     parser = parse_string(source)
     tree = parser.program()
 
-    # 1) Errores de sintaxis
     syn_errs = get_syntax_errors(parser)
     if syn_errs:
         return {
@@ -38,7 +45,6 @@ def compile_source(source: str, analyzer: SemanticAnalyzer):
             "parse_tree": tree.toStringTree(recog=parser) if hasattr(tree, "toStringTree") else "(parse tree unavailable)",
         }
 
-    # 2) Análisis semántico
     errors = SemanticErrorReport()
     analyzer.errors = errors
     analyzer.visit(tree)
@@ -52,24 +58,51 @@ def compile_source(source: str, analyzer: SemanticAnalyzer):
         "parser_obj": parser,
     }
 
+# -------------------------------------------------------------------
+# Genera una representación textual de la tabla de símbolos.
+# Si el analizador tiene un método dump(), lo usa directamente.
+# Si no, crea una salida básica con los símbolos actuales.
+# -------------------------------------------------------------------
 def symtab_text(analyzer: SemanticAnalyzer) -> str:
+    """
+    Devuelve la tabla de símbolos con formato tabular.
+    Si SymbolTable.dump() existe, lo usa; de lo contrario,
+    genera una tabla legible con nombres, tipos y alcances.
+    """
     stab = analyzer.symtab
+
+    # Si existe un método dump() definido, se usa directamente.
     if hasattr(stab, "dump"):
         try:
             return stab.dump()
         except Exception:
             pass
-    # Fallback minimalista si no hay dump()
-    lines = ["[symbol table dump not available: add SymbolTable.dump() for richer output]"]
-    if hasattr(stab, "current"):
-        cur = stab.current
-        if hasattr(cur, "symbols"):
-            lines.append("Current scope:")
-            for name, sym in cur.symbols.items():
-                typ = getattr(sym, "typ", None)
-                lines.append(f"  - {name}: {typ}")
+
+    # Fallback manual si no hay dump() implementado.
+    lines = []
+    header = f"{'Nombre':<15} | {'Tipo':<15} | {'Ámbito':<10}"
+    sep = "-" * len(header)
+    lines.append("[Tabla de Símbolos]")
+    lines.append(sep)
+    lines.append(header)
+    lines.append(sep)
+
+    # Recorre los símbolos del scope actual si existen.
+    if hasattr(stab, "current") and hasattr(stab.current, "symbols"):
+        for name, sym in stab.current.symbols.items():
+            typ = getattr(sym, "typ", "—")
+            scope = getattr(sym, "scope", None)
+            scope_name = getattr(scope, "name", "global")
+            lines.append(f"{name:<15} | {str(typ):<15} | {scope_name:<10}")
+    else:
+        lines.append("(No hay símbolos registrados)")
+
+    lines.append(sep)
     return "\n".join(lines)
 
+# -------------------------------------------------------------------
+# Carga el archivo por defecto (program.cps) o genera una plantilla inicial.
+# -------------------------------------------------------------------
 def load_default_code() -> str:
     p = pathlib.Path(DEFAULT_FILE)
     if p.exists():
@@ -82,21 +115,26 @@ let x: integer = 1;
 print(x);
 """
 
-# ---------- Estado ----------
+# -------------------------------------------------------------------
+# Inicialización del estado de la aplicación (variables persistentes).
+# -------------------------------------------------------------------
 if "analyzer" not in st.session_state:
     st.session_state.analyzer = SemanticAnalyzer(errors=SemanticErrorReport())
 
 if "code" not in st.session_state:
     st.session_state.code = load_default_code()
 
-# Guarda últimos resultados para no perderlos en reruns
 st.session_state.setdefault("parse_tree_obj", None)
 st.session_state.setdefault("last_compile", None)
 st.session_state.setdefault("tac_text", "")
 st.session_state.setdefault("tac_error", "")
 
-# ---------- Sidebar ----------
+# -------------------------------------------------------------------
+# Panel lateral (sidebar) con acciones del usuario.
+# Permite reiniciar el entorno, cargar o descargar código fuente.
+# -------------------------------------------------------------------
 st.sidebar.title("Acciones")
+
 preserve_env = st.sidebar.checkbox(
     "Preservar símbolos entre compilaciones",
     value=False,
@@ -125,12 +163,13 @@ st.sidebar.download_button(
     mime="text/plain",
 )
 
-# ---------- Main UI ----------
+# -------------------------------------------------------------------
+# Interfaz principal del IDE: editor y panel de compilación.
+# -------------------------------------------------------------------
 st.title(PAGE_TITLE)
-
-# Dos columnas: editor y acciones
 col_editor, col_actions = st.columns([2, 1], gap="large")
 
+# ---------------- Editor de código ----------------
 with col_editor:
     st.subheader("Editor")
     st.session_state.code = st.text_area(
@@ -141,6 +180,7 @@ with col_editor:
         placeholder="// Escribe tu Compiscript aquí…",
     )
 
+# ---------------- Panel de compilación ----------------
 with col_actions:
     st.subheader("Compilación")
     do_compile = st.button("Compilar", type="primary")
@@ -156,6 +196,7 @@ with col_actions:
         st.session_state.last_compile = result
         st.session_state.parse_tree_obj = result.get("parse_tree_obj") if result.get("ok") else None
 
+        # Muestra los errores o el resultado del análisis
         if result["syntax_errors"]:
             st.error(f"{result['syntax_errors']} errores de sintaxis.")
         elif not result["ok"]:
@@ -165,6 +206,7 @@ with col_actions:
         else:
             st.success("Análisis semántico completado con éxito.")
 
+            # Generación del TAC si no hay errores
             try:
                 try:
                     from src.gen.tac_generator import generate_tac_text
@@ -176,6 +218,7 @@ with col_actions:
             except Exception as e:
                 st.session_state.tac_error = f"No se pudo generar TAC: {e}"
 
+        # Árbol de parseo y tabla de símbolos
         with st.expander("Árbol de parseo (toStringTree)", expanded=False):
             st.code(result["parse_tree"])
 
@@ -184,14 +227,16 @@ with col_actions:
             st.code(table_text)
             st.download_button("Descargar tabla de símbolos", data=table_text, file_name="symbols.txt")
 
-# ---------- Editor de TAC ----------
+# -------------------------------------------------------------------
+# Sección inferior: vista del código intermedio TAC generado.
+# -------------------------------------------------------------------
 st.markdown("---")
 st.subheader("Código intermedio (TAC)")
 
 if st.session_state.tac_error:
     st.error(st.session_state.tac_error)
 
-# Editor de solo lectura (puedes quitar disabled si quieres que se pueda editar)
+# Editor de TAC (solo lectura por defecto)
 st.session_state.tac_text = st.text_area(
     "TAC",
     value=st.session_state.tac_text,
@@ -201,7 +246,9 @@ st.session_state.tac_text = st.text_area(
     disabled=True,
 )
 
-# Acciones TAC
+# -------------------------------------------------------------------
+# Acciones sobre el TAC: descarga o regeneración manual.
+# -------------------------------------------------------------------
 col_tac_dl, col_tac_regen = st.columns([1, 1])
 
 with col_tac_dl:
@@ -214,7 +261,6 @@ with col_tac_dl:
         )
 
 with col_tac_regen:
-
     if st.session_state.parse_tree_obj is not None:
         if st.button("Regenerar TAC"):
             try:
