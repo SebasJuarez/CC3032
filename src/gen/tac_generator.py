@@ -107,6 +107,67 @@ class TACGenerator(CompiscriptVisitor):
         return None
 
     def visitFunctionDeclaration(self, ctx: CompiscriptParser.FunctionDeclarationContext):
+        """Emite delimitadores de función para permitir backend MIPS.
+        Estructura esperada (simplificada): 'function' Identifier '(' params? ')' block
+        Generamos:
+          (func_begin, name, _, _)
+          ... cuerpo ...
+          (func_end, name, _, _)
+        No generamos código para parámetros aquí; se asume que la tabla de símbolos
+        ya los contiene tras el análisis semántico. Añadimos cuádruplos 'fparam'
+        por cada parámetro formal para facilitar la carga en el backend.
+        """
+        try:
+            name = ctx.Identifier().getText()
+        except Exception:
+            name = '<anon_func>'
+        self.tac.emit('func_begin', name, '', '')
+        # parámetros formales
+        try:
+            params_ctx = ctx.parameters()
+            if params_ctx:
+                # grammar assumption: parameters: (param (',' param)*)?
+                for i in range(params_ctx.getChildCount()):
+                    ch = params_ctx.getChild(i)
+                    # heurística: un identificador podría ser el nombre
+                    try:
+                        if hasattr(ch, 'getText'):
+                            txt = ch.getText()
+                            # Saltar comas y tipos (simplificado); cuando detectamos un identificador aislado lo emitimos
+                            if txt == ',':
+                                continue
+                            # Evitar tipos primitivos repetidos
+                            if txt in ('integer', 'string', 'boolean', 'void'):  # añade otros tipos si existen
+                                continue
+                            # Normalizar identificador con posible anotación ":tipo"
+                            if ':' in txt:
+                                txt = txt.split(':', 1)[0]
+                            # Emitir parámetro formal
+                            self.tac.emit('fparam', txt, '', '')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # Visitar bloque de la función (asumimos último hijo es el bloque)
+        try:
+            # Algunas gramáticas podrían tener ctx.block(), en otras el cuerpo es child específico
+            if hasattr(ctx, 'block') and ctx.block() is not None:
+                ctx.block().accept(self)
+            else:
+                # fallback: iterar hijos y visitar el que parezca bloque
+                for i in range(ctx.getChildCount()):
+                    ch = ctx.getChild(i)
+                    txt = getattr(ch, 'getText', lambda: '')()
+                    if txt.startswith('{'):
+                        try:
+                            ch.accept(self)
+                            break
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        # Si el cuerpo no contiene un 'ret' explícito, el backend añadirá retorno implícito.
+        self.tac.emit('func_end', name, '', '')
         return None
 
     def visitVariableDeclaration(self, ctx: CompiscriptParser.VariableDeclarationContext):

@@ -131,6 +131,8 @@ st.session_state.setdefault("tac_error", "")
 st.session_state.setdefault("tac_rows", [])
 st.session_state.setdefault("tac_table_md", "")
 st.session_state.setdefault("tac_csv", "")
+st.session_state.setdefault("mips_text", "")
+st.session_state.setdefault("mips_error", "")
 
 # -------------------------------------------------------------------
 # Panel lateral (sidebar) con acciones del usuario.
@@ -191,6 +193,8 @@ with col_actions:
     if do_compile:
         st.session_state.tac_text = ""
         st.session_state.tac_error = ""
+        st.session_state.mips_text = ""
+        st.session_state.mips_error = ""
 
         if not preserve_env:
             st.session_state.analyzer = SemanticAnalyzer(errors=SemanticErrorReport())
@@ -212,6 +216,7 @@ with col_actions:
             # Generación del TAC si no hay errores
             try:
                 from src.gen.tac_generator import generate_tac_text, generate_tac_from_parser
+                from src.codegen.mips.generator import generate_mips_from_tac
                 # Texto de TAC (cuádruplos en paréntesis)
                 tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
                 st.session_state.tac_text = tac_text
@@ -242,6 +247,12 @@ with col_actions:
                         f"{esc(r['op'])},{esc(r['arg1'])},{esc(r['arg2'])},{esc(r['res'])}"
                     )
                 st.session_state.tac_csv = "\n".join(csv_lines)
+                # Generar MIPS ensamblador
+                try:
+                    mips_code = generate_mips_from_tac(tac_obj)
+                    st.session_state.mips_text = mips_code
+                except Exception as em:
+                    st.session_state.mips_error = f"No se pudo generar MIPS: {em}"
             except Exception as e:
                 st.session_state.tac_error = f"No se pudo generar TAC: {e}"
 
@@ -288,6 +299,31 @@ with tab_text:
         disabled=True,
     )
 
+st.markdown("---")
+st.subheader("Código ensamblador MIPS")
+
+if st.session_state.mips_error:
+    st.error(st.session_state.mips_error)
+
+mips_col_view, mips_col_dl = st.columns([3,1])
+with mips_col_view:
+    st.session_state.mips_text = st.text_area(
+        "MIPS",
+        value=st.session_state.mips_text,
+        height=300,
+        label_visibility="collapsed",
+        placeholder="Compila para ver el ensamblador MIPS…",
+        disabled=True,
+    )
+with mips_col_dl:
+    if st.session_state.mips_text:
+        st.download_button(
+            "Descargar .s",
+            data=st.session_state.mips_text,
+            file_name="program.s",
+            mime="text/plain",
+        )
+
 # -------------------------------------------------------------------
 # Acciones sobre el TAC: descarga o regeneración manual.
 # -------------------------------------------------------------------
@@ -307,6 +343,7 @@ with col_tac_regen:
         if st.button("Regenerar TAC"):
             try:
                 from src.gen.tac_generator import generate_tac_text, generate_tac_from_parser
+                from src.codegen.mips.generator import generate_mips_from_tac
                 st.session_state.tac_text = generate_tac_text(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
                 tac_obj = generate_tac_from_parser(st.session_state.parse_tree_obj, analyzer=st.session_state.analyzer)
                 rows = []
@@ -332,6 +369,13 @@ with col_tac_regen:
                     )
                 st.session_state.tac_csv = "\n".join(csv_lines)
                 st.session_state.tac_error = ""
+                # Regenerar MIPS también
+                try:
+                    mips_code = generate_mips_from_tac(tac_obj)
+                    st.session_state.mips_text = mips_code
+                    st.session_state.mips_error = ""
+                except Exception as em:
+                    st.session_state.mips_error = f"No se pudo regenerar MIPS: {em}"
             except Exception as e:
                 st.session_state.tac_error = f"No se pudo generar TAC: {e}"
                 st.error(st.session_state.tac_error)
