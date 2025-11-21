@@ -17,7 +17,10 @@ class RegisterAllocator:
         self.spills: Dict[str, int] = {}
         self._t_free: List[str] = T_VOLATILES.copy()
         self._s_free: List[str] = S_SAVED.copy()
-        self._next_spill_offset = 0  # crecer hacia - (negativo)
+        # Reservamos 8 bytes iniciales para no pisar área usada por $ra y $fp
+        # en el diseño actual del frame (guardados a -4($fp) y -8($fp)).
+        # Con esto el primer spill quedará en -12($fp).
+        self._next_spill_offset = 8  # crecer hacia - (negativo) desde 8
 
     def is_temp(self, name: str) -> bool:
         return name.startswith("t")

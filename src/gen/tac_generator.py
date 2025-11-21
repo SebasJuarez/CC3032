@@ -60,6 +60,8 @@ class TACGenerator(CompiscriptVisitor):
         # Pilas para manejar break/continue en bucles y switch
         self._break_stack = []
         self._continue_stack = []
+        # Pila de handlers de excepciones: lista de tuplas (tipo, label_catch, label_end)
+        self._catch_stack = []
 
     def _new_label(self, prefix: str = 'L') -> str:
         """Crea etiquetas únicas para estructuras de control."""
@@ -187,20 +189,92 @@ class TACGenerator(CompiscriptVisitor):
         return name
 
     def visitPrintStatement(self, ctx: CompiscriptParser.PrintStatementContext):
-        """Genera llamadas TAC equivalentes a print(expr)."""
+        """Genera llamadas TAC para impresión, diferenciando booleanos.
+        Emite (call, printb, 1, _) si el valor es boolean, de lo contrario print.
+        Criterios boolean:
+          - Literal 'true'/'false'
+          - Símbolo con tipo boolean en tabla de símbolos
+        """
         val_tmp = self.visit(ctx.expression()) or "<error>"
+        is_bool = False
+        try:
+            if isinstance(val_tmp, str) and val_tmp in ('true', 'false'):
+                is_bool = True
+            else:
+                # Intentar resolver símbolo y verificar tipo
+                sym = self._resolve_var(str(val_tmp))
+                if sym and hasattr(sym, 'typ'):
+                    t = getattr(sym, 'typ', None)
+                    # Heurística: tipo con tag 'boolean' o método is_boolean()
+                    if t and (getattr(t, 'tag', '') == 'boolean' or getattr(t, 'is_boolean', lambda: False)()):
+                        is_bool = True
+        except Exception:
+            pass
         self.tac.emit('param', str(val_tmp), '', '')
-        self.tac.emit('call', 'print', '1', '')
+        self.tac.emit('call', 'printb' if is_bool else 'print', '1', '')
         if isinstance(val_tmp, str) and val_tmp.startswith('t'):
             free_temp(val_tmp)
         return None
 
     def visitTryCatchStatement(self, ctx: CompiscriptParser.TryCatchStatementContext):
-        """Por ahora, sólo generamos TAC para el bloque try y omitimos el catch.
-        Evita que el código del catch se ejecute incondicionalmente.
+        """Genera estructura básica de try/catch con labels.
+        Formato:
+          label TRY_X
+          ... cuerpo try ...
+          goto ENDTRY_X
+          label CATCH_X
+          ... cuerpo catch ...
+          label ENDTRY_X
+        Además, mientras se genera el cuerpo try, se propaga el label de catch
+        a operaciones susceptibles (idxchk, división) mediante marcado en los
+        cuádruplos (res para idxchk, quad auxiliar diverr).
         """
-        # try block es block(0), catch block es block(1)
+        # Extraer tipo de excepción del catch: asumimos sintaxis catch (Identifier)
+        exc_type = 'Unknown'
+        # Intento robusto: recorrer hijos para localizar 'catch' y tomar primer identificador dentro de paréntesis
+        try:
+            seen_catch = False
+            paren_open = False
+            for i in range(ctx.getChildCount()):
+                txt = ctx.getChild(i).getText()
+                if txt == 'catch':
+                    seen_catch = True
+                    continue
+                if not seen_catch:
+                    continue
+                if txt == '(':
+                    paren_open = True
+                    continue
+                if txt == ')':
+                    break
+                if paren_open and txt not in ('(', ')'):
+                    exc_type = txt
+                    break
+        except Exception:
+            exc_type = 'Unknown'
+        try_lbl = self._new_label('TRY')
+        catch_lbl = self._new_label('CATCH')
+        end_lbl = self._new_label('ENDTRY')
+        # Emitir label de inicio
+        self.tac.emit('label', try_lbl, '', '')
+        # Push handler
+        self._catch_stack.append((exc_type, catch_lbl, end_lbl))
+        # Visitar bloque try
         self.visit(ctx.block(0))
+        # Pop handler para resto del código (pero necesitamos datos para catch)
+        handler = self._catch_stack.pop()
+        # Salto al fin si se completó el try normalmente
+        self.tac.emit('goto', end_lbl, '', '')
+        # Label de catch
+        self.tac.emit('label', catch_lbl, '', '')
+        # Generar cuerpo del catch (block(1))
+        try:
+            if ctx.block(1):
+                ctx.block(1).accept(self)
+        except Exception:
+            pass
+        # Label de fin
+        self.tac.emit('label', end_lbl, '', '')
         return None
 
     def visitIfStatement(self, ctx: CompiscriptParser.IfStatementContext):
@@ -388,6 +462,13 @@ class TACGenerator(CompiscriptVisitor):
             op = ctx.getChild(2*i - 1).getText()
             opc = 'mul' if op == '*' else ('div' if op == '/' else 'mod')
             t = new_temp()
+            # Si es división y hay un catch activo de DivisionByZero generar quad de verificación
+            if opc == 'div':
+                for etype, clbl, elbl in reversed(self._catch_stack):
+                    if etype == 'DivisionByZero':
+                        # diverr: (diverr, divisor, catch_label, _)
+                        self.tac.emit('diverr', str(right), clbl, '')
+                        break
             self.tac.emit(opc, str(left), str(right), t)
             if isinstance(left, str) and left.startswith('t'): free_temp(left)
             if isinstance(right, str) and right.startswith('t'): free_temp(right)
@@ -435,7 +516,13 @@ class TACGenerator(CompiscriptVisitor):
                 base = tret
             elif txt.startswith('['):
                 idx = self.visit(so.expression()) or '<error>'
-                self.tac.emit('idxchk', str(base), str(idx), '')
+                # idxchk con posible catch activo
+                catch_lbl = ''
+                for etype, clbl, elbl in reversed(self._catch_stack):
+                    if etype == 'IndexOutOfBounds':
+                        catch_lbl = clbl
+                        break
+                self.tac.emit('idxchk', str(base), str(idx), catch_lbl)
                 t = new_temp()
                 self.tac.emit('aload', str(base), str(idx), t)
                 if isinstance(base, str) and base.startswith('t'): free_temp(base)
@@ -479,7 +566,13 @@ class TACGenerator(CompiscriptVisitor):
                 is_ref_elem = False
 
             # Chequeo de índice
-            self.tac.emit('idxchk', str(base), str(idx), '')
+            # idxchk con posible catch activo de IndexOutOfBounds
+            catch_lbl = ''
+            for etype, clbl, elbl in reversed(self._catch_stack):
+                if etype == 'IndexOutOfBounds':
+                    catch_lbl = clbl
+                    break
+            self.tac.emit('idxchk', str(base), str(idx), catch_lbl)
 
             if is_ref_elem:
                 # Cargar valor antiguo, aplicar RC y luego almacenar el nuevo valor
@@ -622,7 +715,12 @@ class TACGenerator(CompiscriptVisitor):
                 base = tret
             elif txt.startswith('['):
                 idx = self.visit(so.expression()) or '<error>'
-                self.tac.emit('idxchk', str(base), str(idx), '')
+                catch_lbl = ''
+                for etype, clbl, elbl in reversed(self._catch_stack):
+                    if etype == 'IndexOutOfBounds':
+                        catch_lbl = clbl
+                        break
+                self.tac.emit('idxchk', str(base), str(idx), catch_lbl)
                 t_elem = new_temp()
                 self.tac.emit('aload', str(base), str(idx), t_elem)
                 if isinstance(base, str) and base.startswith('t'):
@@ -787,58 +885,71 @@ class TACGenerator(CompiscriptVisitor):
         return None
 
     def visitSwitchStatement(self, ctx: CompiscriptParser.SwitchStatementContext):
-        """Lower switch with fall-through semantics. 'break' jumps to end label."""
+        """Lower de switch CON fall-through estilo C.
+        Semántica:
+          - Se evalúan los tests secuencialmente hasta encontrar el primer case que coincide.
+          - Se salta al label del cuerpo coincidente.
+          - Los cuerpos se emiten en orden y *no* insertan salto implícito al final; la caída al siguiente label produce fall-through.
+          - Un 'break' dentro de cualquier case salta al label de fin (usando _break_stack).
+          - Si no hay coincidencia y existe default, se entra a default; si no, se va al fin directamente.
+        """
         val = self.visit(ctx.expression()) or '<error>'
-        end_lbl = self._new_label('L')
-        self._break_stack.append(end_lbl)
         cases = list(ctx.switchCase()) if hasattr(ctx, 'switchCase') else []
         def_case = ctx.defaultCase() if hasattr(ctx, 'defaultCase') else None
-        # Generar cadena de comparaciones
-        next_check_lbl = None
-        case_labels = []
-        for sc in cases:
-            Lc = self._new_label('L')
-            case_labels.append((sc, Lc))
-        # Checks
-        for i, (sc, Lc) in enumerate(case_labels):
-            cval = self.visit(sc.expression()) or '<error>'
-            tcmp = new_temp()
-            self.tac.emit('eq', str(val), str(cval), tcmp)
-            next_lbl = self._new_label('L') if i < len(case_labels) - 1 or def_case is not None else end_lbl
-            self.tac.emit('ifz', tcmp, next_lbl, '')
-            self.tac.emit('goto', Lc, '', '')
-            self.tac.emit('label', next_lbl, '', '')
-            if isinstance(tcmp, str) and tcmp.startswith('t'):
-                free_temp(tcmp)
-        # Si no hubo match, saltar a default o end
-        if def_case is not None:
-            Ld = self._new_label('L')
-            self.tac.emit('goto', Ld, '', '')
+        end_lbl = self._new_label('L')
+
+        # Preparar labels de cada case y default
+        case_labels = [self._new_label('L') for _ in cases]
+        default_lbl = self._new_label('L') if def_case is not None else None
+
+        # Secuencia de tests
+        if cases:
+            for idx, (sc, body_lbl) in enumerate(zip(cases, case_labels)):
+                cval = self.visit(sc.expression()) or '<error>'
+                tcmp = new_temp()
+                self.tac.emit('eq', str(val), str(cval), tcmp)
+                # Label a saltar si falla este test: siguiente test label (creado ad-hoc) o default/end.
+                if idx < len(cases) - 1:
+                    next_test_lbl = self._new_label('LTEST')
+                    self.tac.emit('ifz', tcmp, next_test_lbl, '')
+                    self.tac.emit('goto', body_lbl, '', '')
+                    self.tac.emit('label', next_test_lbl, '', '')
+                else:
+                    # Último test: fallo -> default o fin
+                    fall_target = default_lbl if default_lbl else end_lbl
+                    self.tac.emit('ifz', tcmp, fall_target, '')
+                    self.tac.emit('goto', body_lbl, '', '')
+                if isinstance(tcmp, str) and tcmp.startswith('t'):
+                    free_temp(tcmp)
         else:
-            self.tac.emit('goto', end_lbl, '', '')
-        # Cuerpos de cases
-        for sc, Lc in case_labels:
-            self.tac.emit('label', Lc, '', '')
-            for st in sc.statement():
-                try:
-                    st.accept(self)
-                except Exception:
-                    pass
-        # Default
-        if def_case is not None:
-            Ld = None
-            # Encontrar la etiqueta creada para default (último goto antes)
-            # Simplemente emitimos una nueva etiqueta consistente
-            Ld = self._new_label('L')
-            self.tac.emit('label', Ld, '', '')
-            for st in def_case.statement():
-                try:
-                    st.accept(self)
-                except Exception:
-                    pass
-        # Fin del switch
+            # Sin cases: saltar directo a default o fin
+            self.tac.emit('goto', default_lbl if default_lbl else end_lbl, '', '')
+
+        # Registrar break destino
+        self._break_stack.append(end_lbl)
+        try:
+            # Emitir cuerpos de cases en orden (fall-through por caída)
+            for sc, body_lbl in zip(cases, case_labels):
+                self.tac.emit('label', body_lbl, '', '')
+                for st in sc.statement():
+                    try:
+                        st.accept(self)
+                    except Exception:
+                        pass
+            # Default al final (también puede recibir caída desde case previo)
+            if def_case is not None:
+                self.tac.emit('label', default_lbl, '', '')
+                for st in def_case.statement():
+                    try:
+                        st.accept(self)
+                    except Exception:
+                        pass
+        finally:
+            # Salir de contexto switch
+            self._break_stack.pop()
+
+        # Label de fin (destino de break y salida del switch)
         self.tac.emit('label', end_lbl, '', '')
-        self._break_stack.pop()
         return None
 
 

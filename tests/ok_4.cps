@@ -48,7 +48,8 @@ while (t < 5) {
 }
 
 // switch (si tu gramática lo soporta)
-switch (i) {
+let jum: integer = 1;
+switch (jum) {
     case 0: print("cero");
     case 1: print("uno");
     default: print("otro");

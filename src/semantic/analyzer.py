@@ -25,6 +25,7 @@ class SemanticAnalyzer(CompiscriptVisitor):
         self._inside_loop = 0
         self._inside_function: List[Type] = []
         self._current_class: Optional[ClassSymbol] = None
+        self._inside_switch = 0  # contador de profundidad de switch para permitir 'break'
 
     # ====== Programa y Bloques ======
     def visitProgram(self, ctx: CompiscriptParser.ProgramContext):
@@ -206,13 +207,30 @@ class SemanticAnalyzer(CompiscriptVisitor):
         return None
 
     def visitBreakStatement(self, ctx: CompiscriptParser.BreakStatementContext):
-        if self._inside_loop <= 0:
-            self.errors.add(*_pos(ctx), "'break' used outside of a loop.")
+        if self._inside_loop <= 0 and self._inside_switch <= 0:
+            self.errors.add(*_pos(ctx), "'break' used outside of a loop or switch.")
         return None
 
     def visitContinueStatement(self, ctx: CompiscriptParser.ContinueStatementContext):
         if self._inside_loop <= 0:
             self.errors.add(*_pos(ctx), "'continue' used outside of a loop.")
+        return None
+
+    def visitSwitchStatement(self, ctx: CompiscriptParser.SwitchStatementContext):
+        # Validar expresión (no imponemos tipo estricto; podría ser integer, string, etc.)
+        _ = self.visit(ctx.expression())
+        # Dentro de switch permitimos 'break'
+        self._inside_switch += 1
+        # Visitar cada case
+        if hasattr(ctx, 'switchCase'):
+            for sc in ctx.switchCase():
+                for st in sc.statement():
+                    self.visit(st)
+        # Visitar default
+        if hasattr(ctx, 'defaultCase') and ctx.defaultCase() is not None:
+            for st in ctx.defaultCase().statement():
+                self.visit(st)
+        self._inside_switch -= 1
         return None
 
     def visitReturnStatement(self, ctx: CompiscriptParser.ReturnStatementContext):

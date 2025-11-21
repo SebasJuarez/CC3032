@@ -26,6 +26,26 @@ class MIPSEmitter:
         self.text.instr('li', '$a0', '10')
         self.text.instr('syscall')
         self.text.instr('jr', '$ra')
+        # impresión booleana: $a0 contiene 0 o 1
+        # Emite 'false' o 'true'
+        true_lbl = self.add_string_literal('"true"')
+        false_lbl = self.add_string_literal('"false"')
+        self.text.label('__print_bool')
+        self.text.instr('beq', '$a0', '$zero', f'__bool_false')
+        # true path
+        self.text.instr('la', '$a0', true_lbl)
+        self.text.instr('li', '$v0', '4')
+        self.text.instr('syscall')
+        self.text.instr('j', '__bool_nl')
+        self.text.label('__bool_false')
+        self.text.instr('la', '$a0', false_lbl)
+        self.text.instr('li', '$v0', '4')
+        self.text.instr('syscall')
+        self.text.label('__bool_nl')
+        self.text.instr('li', '$v0', '11')
+        self.text.instr('li', '$a0', '10')
+        self.text.instr('syscall')
+        self.text.instr('jr', '$ra')
         # Stubs para funciones externas llamadas (si no están definidas)
         for name in self.externals:
             self.text.label(name, 'external stub')

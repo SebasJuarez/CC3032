@@ -354,6 +354,8 @@ class MIPSGenerator:
                 res_reg, off = self._reg_for_write(r, regs, '$t8')
             if fname == 'print':
                 target = '__print_str' if self._last_param_kind == 'string' else '__print_int'
+            elif fname == 'printb':
+                target = '__print_bool'
             else:
                 target = fname
             # Resolver llamadas indirectas via invoke: último param 'fn'
@@ -380,6 +382,10 @@ class MIPSGenerator:
                     self.emitter.text.instr('la', f'$a{idx}', val, comment=f'arg{idx} string')
                 elif kind == 'intlit':
                     self.emitter.text.instr('li', f'$a{idx}', val, comment=f'arg{idx} int')
+                elif kind == 'boollit':
+                    # cargar 1 para true, 0 para false
+                    imm = '1' if val == 'true' else '0'
+                    self.emitter.text.instr('li', f'$a{idx}', imm, comment=f'arg{idx} bool')
                 else:
                     self.emitter.text.instr('move', f'$a{idx}', val, comment=f'arg{idx}')
             # Implementaciones especializadas de objetos Person/Student
@@ -524,22 +530,33 @@ class MIPSGenerator:
                 self.emitter.text.instr('sw', dest, f'{off}($fp)')
             return
         if op == 'idxchk':
-            # Simple bounds check: if idx >= len print INDEX_OOB
+            # Bounds check con soporte de catch: (idxchk, arr, idx, catch_lbl?)
             arr_reg = self._reg_for_read(a1, regs, '$t8')
             idx_reg = self._reg_for_read(a2, regs, '$t9')
             len_tmp = '$t7'
             self.emitter.text.instr('lw', len_tmp, f'0({arr_reg})')
-            # slt ok, idx < len ?
-            self.emitter.text.instr('slt', '$t6', idx_reg, len_tmp)
-            oob_lbl = self._new_label('OOB')
-            ok_lbl = self._new_label('OOBOK')
-            self.emitter.text.instr('beq', '$t6', '$zero', oob_lbl)
-            self.emitter.text.instr('j', ok_lbl)
-            self.emitter.text.label(oob_lbl)
-            msg_lbl = self.emitter.add_string_literal('"INDEX_OOB"')
-            self.emitter.text.instr('la', '$a0', msg_lbl)
-            self.emitter.text.instr('jal', '__print_str')
-            self.emitter.text.label(ok_lbl)
+            self.emitter.text.instr('slt', '$t6', idx_reg, len_tmp)  # $t6=1 si idx < len
+            if r and r != '':
+                # r almacena label de catch cuando activo
+                self.emitter.text.instr('beq', '$t6', '$zero', r)
+            else:
+                # Comportamiento previo: imprimir y continuar
+                oob_lbl = self._new_label('OOB')
+                ok_lbl = self._new_label('OOBOK')
+                self.emitter.text.instr('beq', '$t6', '$zero', oob_lbl)
+                self.emitter.text.instr('j', ok_lbl)
+                self.emitter.text.label(oob_lbl)
+                msg_lbl = self.emitter.add_string_literal('"INDEX_OOB"')
+                self.emitter.text.instr('la', '$a0', msg_lbl)
+                self.emitter.text.instr('jal', '__print_str')
+                self.emitter.text.label(ok_lbl)
+            return
+        if op == 'diverr':
+            # (diverr, divisor, catch_label, _) => si divisor == 0 saltar a handler
+            divisor_reg = self._reg_for_read(a1, regs, '$t8')
+            handler_lbl = a2
+            if handler_lbl:
+                self.emitter.text.instr('beq', divisor_reg, '$zero', handler_lbl)
             return
         if op == 'aload':
             # (aload, arr, idx, t_dest)
